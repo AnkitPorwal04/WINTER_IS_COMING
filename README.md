@@ -87,7 +87,7 @@ Everything lives in the ❄︎ icon in your menu bar:
 | **Right-click ❄︎** | Open the full menu |
 | Snow Amount → Light / Medium / Heavy | 120 / 260 / 500 flakes |
 | **Sweep Now 🧹** | Send the sweeper out right now |
-| **Sweep Every → 1 / 3 / 5 / 10 min** | How often the sweeper comes out on his own |
+| **Sweep Every → 1 / 3 / 5 / 10 min** | How often the sweeper comes out on his own (default: 3 min) |
 | **Sweeper Auto-Clean** | Toggle the automatic sweeper (full ground / timed visits) |
 | Clear Snow | Instantly remove all piles, no animation |
 | Quit | Goodbye, winter 👋 |

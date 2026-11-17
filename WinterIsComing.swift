@@ -31,7 +31,7 @@ enum Cfg {
     static var autoClear = true              // when the ground is full, the sweeper comes out
     static let cleanupThreshold: CGFloat = 0.8  // ground fullness (0...1) that calls the sweeper
     static let sweepDuration: CGFloat = 7.0  // seconds for the sweeper to walk across the screen
-    static var sweepInterval: CGFloat = 300  // sweeper also comes out this many seconds after his last sweep (menu: 1/3/5/10 min)
+    static var sweepInterval: CGFloat = 180  // sweeper also comes out this many seconds after his last sweep (menu: 1/3/5/10 min)
 }
 
 // MARK: - Find the Dock (needs Accessibility permission)
@@ -1082,6 +1082,16 @@ final class SnowScene: SKScene {
     // Read all window frames (macOS origin is top-left, SpriteKit is bottom-left, so flip y)
     func pollWindows(dt: CGFloat) {
         let H = size.height
+        // Display bounds in the same top-left global coordinates CGWindowBounds uses,
+        // so each window is size-checked against the screen it actually sits on
+        let myDisplay = CGDisplayBounds(CGMainDisplayID())
+        var displays: [CGRect] = []
+        var dispCount: UInt32 = 0
+        var dispIDs = [CGDirectDisplayID](repeating: 0, count: 16)
+        if CGGetActiveDisplayList(16, &dispIDs, &dispCount) == .success {
+            displays = (0..<Int(dispCount)).map { CGDisplayBounds(dispIDs[$0]) }
+        }
+        if displays.isEmpty { displays = [myDisplay] }
         var newOrder: [(id: Int, rect: CGRect)] = []
         if let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] {
             for w in info {
@@ -1092,9 +1102,18 @@ final class SnowScene: SKScene {
                       let b = CGRect(dictionaryRepresentation: bd as CFDictionary) else { continue }
                 let alpha = (w[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1
                 if alpha < 0.05 || b.width < 80 || b.height < 40 { continue }
+                // Windows living on another display never collect snow in this overlay
+                if !b.intersects(myDisplay) { continue }
                 // Fullscreen or maximized windows act as the backdrop: no pile on top,
-                // no ground occlusion, so the snow falls through and collects at the bottom
-                if b.width >= size.width * 0.92 && b.height >= size.height * 0.92 { continue }
+                // no ground occlusion, so the snow falls through and collects at the bottom.
+                // Sized against the window's own screen; the height bar is loose enough to
+                // include "maximized" windows wedged between the menu bar and the Dock.
+                func overlap(_ d: CGRect) -> CGFloat {
+                    let i = d.intersection(b)
+                    return i.isNull ? 0 : i.width * i.height
+                }
+                let host = displays.max(by: { overlap($0) < overlap($1) }) ?? myDisplay
+                if b.width >= host.width * 0.92 && b.height >= host.height * 0.85 { continue }
                 newOrder.append((id: numN.intValue,
                                  rect: CGRect(x: b.minX, y: H - b.maxY, width: b.width, height: b.height)))
             }
