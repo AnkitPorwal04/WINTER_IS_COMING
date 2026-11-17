@@ -31,7 +31,7 @@ enum Cfg {
     static var autoClear = true              // when the ground is full, the sweeper comes out
     static let cleanupThreshold: CGFloat = 0.8  // ground fullness (0...1) that calls the sweeper
     static let sweepDuration: CGFloat = 7.0  // seconds for the sweeper to walk across the screen
-    static let sweepInterval: CGFloat = 240  // sweeper also comes out this many seconds after his last sweep
+    static var sweepInterval: CGFloat = 300  // sweeper also comes out this many seconds after his last sweep (menu: 1/3/5/10 min)
 }
 
 // MARK: - Find the Dock (needs Accessibility permission)
@@ -1324,6 +1324,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var pauseItem: NSMenuItem!
     var autoClearItem: NSMenuItem!
     var amountItems: [NSMenuItem] = []
+    var intervalItems: [NSMenuItem] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let screen = NSScreen.screens.first else { return }
@@ -1418,6 +1419,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sweep.target = self
         menu.addItem(sweep)
 
+        let every = NSMenuItem(title: "Sweep Every", action: nil, keyEquivalent: "")
+        let everySub = NSMenu()
+        for minutes in [1, 3, 5, 10] {
+            let it = NSMenuItem(title: "\(minutes) min", action: #selector(setInterval(_:)), keyEquivalent: "")
+            it.target = self
+            it.tag = minutes * 60
+            it.state = (CGFloat(it.tag) == Cfg.sweepInterval) ? .on : .off
+            everySub.addItem(it)
+            intervalItems.append(it)
+        }
+        every.submenu = everySub
+        menu.addItem(every)
+
         autoClearItem = NSMenuItem(title: "Sweeper Auto-Clean", action: #selector(toggleAutoClear), keyEquivalent: "a")
         autoClearItem.target = self
         autoClearItem.state = Cfg.autoClear ? .on : .off
@@ -1458,6 +1472,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func setAmount(_ sender: NSMenuItem) {
         Cfg.targetFlakes = sender.tag
         for it in amountItems { it.state = (it === sender) ? .on : .off }
+    }
+
+    @objc func setInterval(_ sender: NSMenuItem) {
+        Cfg.sweepInterval = CGFloat(sender.tag)
+        for it in intervalItems { it.state = (it === sender) ? .on : .off }
     }
 
     @objc func clearSnow() { scene.clearAll() }
