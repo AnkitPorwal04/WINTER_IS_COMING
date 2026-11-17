@@ -10,6 +10,22 @@ import SpriteKit
 
 // MARK: - Settings (feel free to tweak)
 
+let appVersion = "1.3.1"
+
+func isNewerVersion(_ remote: String, than local: String) -> Bool {
+    let remoteParts = remote.split(separator: ".")
+    let localParts = local.split(separator: ".")
+    let next = remoteParts.compactMap { Int($0) }
+    let current = localParts.compactMap { Int($0) }
+    guard next.count == remoteParts.count, current.count == localParts.count else { return false }
+    for i in 0..<max(next.count, current.count) {
+        let a = i < next.count ? next[i] : 0
+        let b = i < current.count ? current[i] : 0
+        if a != b { return a > b }
+    }
+    return false
+}
+
 enum Cfg {
     static var targetFlakes = 260            // number of flakes falling at the same time
     static let colW: CGFloat = 3             // width of one column of the snow height map (px)
@@ -1395,6 +1411,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var autoClearItem: NSMenuItem!
     var amountItems: [NSMenuItem] = []
     var intervalItems: [NSMenuItem] = []
+    var updateItem: NSMenuItem?
+    var offeredVersion: String?
+    var updateTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let screen = NSScreen.screens.first else { return }
@@ -1422,6 +1441,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.orderFrontRegardless()
 
         setupMenu()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in self?.checkForUpdate() }
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 24 * 60 * 60, repeats: true) { [weak self] _ in
+            self?.checkForUpdate()
+        }
         NotificationCenter.default.addObserver(self, selector: #selector(screensChanged),
                                                name: NSApplication.didChangeScreenParametersNotification, object: nil)
 
@@ -1510,6 +1533,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         menuRef = menu
+    }
+
+    func checkForUpdate() {
+        guard let url = URL(string: "https://registry.npmjs.org/winter-is-coming/latest") else { return }
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let version = json["version"] as? String,
+                  isNewerVersion(version, than: appVersion) else { return }
+            DispatchQueue.main.async { self?.offerUpdate(to: version) }
+        }.resume()
+    }
+
+    func offerUpdate(to version: String) {
+        if let offered = offeredVersion, !isNewerVersion(version, than: offered) { return }
+        offeredVersion = version
+        if let item = updateItem {
+            item.title = "Update to \(version)…"
+            return
+        }
+        let item = NSMenuItem(title: "Update to \(version)…", action: #selector(installUpdate(_:)), keyEquivalent: "u")
+        item.target = self
+        menuRef.insertItem(item, at: 0)
+        menuRef.insertItem(.separator(), at: 1)
+        updateItem = item
+    }
+
+    @objc func installUpdate(_ sender: NSMenuItem) {
+        sender.isEnabled = false
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let updater = Process()
+            updater.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            updater.arguments = ["-lc", "npm update -g winter-is-coming && winter-is-coming app"]
+            do {
+                try updater.run()
+                updater.waitUntilExit()
+                guard updater.terminationStatus == 0 else { self?.showUpdateFailure(); return }
+
+                let relaunch = Process()
+                relaunch.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                relaunch.arguments = ["-lc", "(sleep 1; open \"$HOME/Applications/WinterIsComing.app\") >/dev/null 2>&1 &!"]
+                try relaunch.run()
+                relaunch.waitUntilExit()
+                guard relaunch.terminationStatus == 0 else { self?.showUpdateFailure(); return }
+                DispatchQueue.main.async { NSApp.terminate(nil) }
+            } catch {
+                self?.showUpdateFailure()
+            }
+        }
+    }
+
+    func showUpdateFailure() {
+        DispatchQueue.main.async { [weak self] in
+            self?.updateItem?.isEnabled = true
+            let alert = NSAlert()
+            alert.messageText = "Couldn't update automatically. Run: npm update -g winter-is-coming"
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        }
     }
 
     // Left-click on the ❄︎ toggles the snow; right-click (or ⌃-click) opens the menu.

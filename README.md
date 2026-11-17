@@ -89,6 +89,7 @@ Everything lives in the ❄︎ icon in your menu bar:
 | **Sweep Now 🧹** | Send the sweeper out right now |
 | **Sweep Every → 1 / 3 / 5 / 10 min** | How often the sweeper comes out on his own (default: 3 min) |
 | **Sweeper Auto-Clean** | Toggle the automatic sweeper (full ground / timed visits) |
+| **Update to X…** | The app checks daily and offers fresh snow-code here; the CLI also prints a notice when an update is ready |
 | Clear Snow | Instantly remove all piles, no animation |
 | Quit | Goodbye, winter 👋 |
 
