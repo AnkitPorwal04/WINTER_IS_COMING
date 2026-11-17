@@ -16,11 +16,26 @@ Snow falls on your desktop and piles up on your windows and Dock. Roll it into s
 - 🖐️ **Hold a snowball** with the left mouse button and carry it anywhere
 - ⛄ **Stack three snowballs** and they turn into a snowman with a carrot nose and a red scarf
 - 💥 **A falling snowball goes *poof*** into a soft heap of snow, ready to be rolled again
+- 🌬️ **It never stops snowing** — and when the ground fills up, an avalanche gust sweeps across the screen, blasting every pile and snowball away in a wave, then the snow starts over. Toggle it with **Auto-Clear When Full** in the menu
 
-## Try it 🚀
+## Install with npm 📦
 
 ```sh
-git clone https://github.com/<your-username>/WINTER_IS_COMING.git
+npm install -g @ankitporwal04/winter-is-coming
+winter-is-coming        # let it snow
+winter-is-coming stop   # spring has arrived
+```
+
+> Published on GitHub Packages, so point npm at it once:
+> `echo "@ankitporwal04:registry=https://npm.pkg.github.com" >> ~/.npmrc`
+> (GitHub Packages also needs a GitHub token with `read:packages` in your npm auth.)
+
+The first run compiles the Swift file (needs Xcode Command Line Tools: `xcode-select --install`) and caches the binary. After that it starts instantly.
+
+## Or build from source 🚀
+
+```sh
+git clone https://github.com/AnkitPorwal04/WINTER_IS_COMING.git
 cd WINTER_IS_COMING
 zsh build.sh
 ```

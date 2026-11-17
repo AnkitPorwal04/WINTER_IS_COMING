@@ -28,6 +28,9 @@ enum Cfg {
     static let ballMaxRadius: CGFloat = 28   // and stops growing at this size
     static let maxBalls = 20                 // oldest resting snowballs are removed beyond this
     static let dockGain: CGFloat = 3.0       // snow landing on the Dock counts this many times more, so it builds up
+    static var autoClear = true              // when the ground is full, a gust sweeps everything away
+    static let cleanupThreshold: CGFloat = 0.8  // ground fullness (0...1) that triggers the sweep
+    static let sweepDuration: CGFloat = 2.4  // seconds for the clear-wave to cross the screen
 }
 
 // MARK: - Find the Dock (needs Accessibility permission)
@@ -362,6 +365,10 @@ final class SnowScene: SKScene {
     var dragOffset = CGPoint.zero
     var dragVel = CGVector.zero
     var speckTex: SKTexture?
+    var cleanupActive = false
+    var cleanupX: CGFloat = 0
+    var cleanupCheckAcc: CGFloat = 0
+    var cleanupGraceUntil: CGFloat = 0
     static let dockID = -2
 
     override func didMove(to view: SKView) {
@@ -487,6 +494,85 @@ final class SnowScene: SKScene {
         updateMouseCapture()
         if let b = dragBall { stepDrag(b, dt) } else { updateRolling() }
         stepBalls(dt)
+        if cleanupActive {
+            stepCleanup(dt)
+        } else if Cfg.autoClear {
+            cleanupCheckAcc += dt
+            if cleanupCheckAcc >= 1.0 {
+                cleanupCheckAcc = 0
+                if groundFullness() >= Cfg.cleanupThreshold { startCleanup() }
+            }
+        }
+    }
+
+    // MARK: Auto-clear sweep
+
+    /// Mean fill level (0...1) of the visible ground columns
+    func groundFullness() -> CGFloat {
+        guard let g = ground else { return 0 }
+        var sum: CGFloat = 0
+        var n = 0
+        for c in 0..<g.count where !g.occ[c] && g.caps[c] > 1 {
+            sum += g.h[c] / g.caps[c]
+            n += 1
+        }
+        return n > 0 ? sum / CGFloat(n) : 0
+    }
+
+    func startCleanup() {
+        cleanupActive = true
+        cleanupX = -80
+    }
+
+    /// A gust front moves left to right; every snow column it passes bursts into flying clumps,
+    /// snowballs go poof, and while the wave runs nothing re-piles. Then the snow keeps falling.
+    func stepCleanup(_ dt: CGFloat) {
+        let prevX = cleanupX
+        cleanupX += (size.width + 360) / Cfg.sweepDuration * dt
+
+        var targets: [Pile] = []
+        if let g = ground { targets.append(g) }
+        if let d = dockPile { targets.append(d) }
+        targets.append(contentsOf: piles.values)
+
+        var budget = CGFloat(max(0, Cfg.maxClumps - flakes.count + Cfg.targetFlakes))
+        for p in targets {
+            for c in 0..<p.count {
+                let x = p.colX(c)
+                guard x > prevX, x <= cleanupX, !p.occ[c], p.h[c] > 0.4 else { continue }
+                let hh = p.h[c]
+                p.h[c] = 0
+                p.dirty = true
+                var amount = hh / 3.0
+                while amount > 0, budget > 0 {
+                    if amount < 1 && CGFloat.random(in: 0...1) > amount { break }
+                    spawnClump(at: CGPoint(x: x + rnd(-1.5, 1.5), y: p.topY + rnd(0, hh)),
+                               vel: CGVector(dx: rnd(260, 540), dy: rnd(140, 430)),
+                               sourceID: -4)
+                    amount -= 1
+                    budget -= 1
+                }
+            }
+        }
+
+        var i = balls.count - 1
+        while i >= 0 {
+            let b = balls[i]
+            if !b.dragging, !b.falling, b.x <= cleanupX {
+                b.vel = CGVector(dx: rnd(200, 380), dy: rnd(80, 200))
+                removeDecor(stackOf: b)
+                poof(b)
+                b.node.removeFromParent()
+                balls.remove(at: i)
+            }
+            i -= 1
+        }
+
+        if cleanupX > size.width + 300 {
+            cleanupActive = false
+            cleanupGraceUntil = t + 1.2
+            for p in targets { p.clear(); p.redraw() }
+        }
     }
 
     // MARK: Dragging & snowmen
@@ -1064,13 +1150,14 @@ final class SnowScene: SKScene {
             }
 
             var gone = false
+            let deposit = !cleanupActive && t >= cleanupGraceUntil
             if p.y < prevY {
                 // The Dock is always in front of every window, so check it first
                 if let d = dockPile, let c = d.col(at: p.x),
                    !(f.isClump && f.ignoreID == SnowScene.dockID && t < f.ignoreUntil) {
                     let s = d.surface(c)
                     if prevY >= s && p.y < s {
-                        d.add(at: c, amount: (f.isClump ? 1.6 : f.size * 0.16) * Cfg.dockGain)
+                        if deposit { d.add(at: c, amount: (f.isClump ? 1.6 : f.size * 0.16) * Cfg.dockGain) }
                         gone = true
                     }
                 }
@@ -1081,14 +1168,14 @@ final class SnowScene: SKScene {
                     guard let c = pile.col(at: p.x), !pile.occ[c] else { continue }
                     let s = pile.surface(c)
                     if prevY >= s && p.y < s {
-                        pile.add(at: c, amount: f.isClump ? 1.6 : f.size * 0.16)
+                        if deposit { pile.add(at: c, amount: f.isClump ? 1.6 : f.size * 0.16) }
                         gone = true
                         break
                     }
                 } }
                 // Finally the bottom of the screen
                 if !gone, let g = ground, let c = g.col(at: p.x), p.y < g.surface(c) {
-                    if !g.occ[c] { g.add(at: c, amount: f.isClump ? 1.6 : f.size * 0.12) }
+                    if deposit && !g.occ[c] { g.add(at: c, amount: f.isClump ? 1.6 : f.size * 0.12) }
                     gone = true
                 }
             }
@@ -1133,6 +1220,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var scene: SnowScene!
     var statusItem: NSStatusItem!
     var pauseItem: NSMenuItem!
+    var autoClearItem: NSMenuItem!
     var amountItems: [NSMenuItem] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -1211,6 +1299,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         clear.target = self
         menu.addItem(clear)
 
+        autoClearItem = NSMenuItem(title: "Auto-Clear When Full", action: #selector(toggleAutoClear), keyEquivalent: "a")
+        autoClearItem.target = self
+        autoClearItem.state = Cfg.autoClear ? .on : .off
+        menu.addItem(autoClearItem)
+
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu
@@ -1233,6 +1326,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func clearSnow() { scene.clearAll() }
+
+    @objc func toggleAutoClear() {
+        Cfg.autoClear.toggle()
+        autoClearItem.state = Cfg.autoClear ? .on : .off
+    }
 
     @objc func screensChanged() {
         guard let screen = NSScreen.screens.first else { return }

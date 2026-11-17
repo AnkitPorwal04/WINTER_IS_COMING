@@ -1,0 +1,39 @@
+{
+  "name": "@ankitporwal04/winter-is-coming",
+  "version": "1.0.0",
+  "description": "Snow for your Mac desktop — endless snowfall that piles on windows and the Dock, with snowballs, snowmen, and an avalanche auto-clear when the ground fills up.",
+  "bin": {
+    "winter-is-coming": "bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "WinterIsComing.swift",
+    "build.sh",
+    "README.md",
+    "LICENSE"
+  ],
+  "os": [
+    "darwin"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AnkitPorwal04/WINTER_IS_COMING.git"
+  },
+  "homepage": "https://github.com/AnkitPorwal04/WINTER_IS_COMING#readme",
+  "keywords": [
+    "snow",
+    "macos",
+    "desktop",
+    "overlay",
+    "winter",
+    "animation"
+  ],
+  "author": "Ankit Porwal <porwalankit443@gmail.com>",
+  "license": "MIT",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  }
+}
