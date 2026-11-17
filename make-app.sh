@@ -24,9 +24,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 	<key>CFBundleIdentifier</key>
 	<string>com.ankitporwal.winter-is-coming</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.2.1</string>
+	<string>1.3.0</string>
 	<key>CFBundleVersion</key>
-	<string>1.2.1</string>
+	<string>1.3.0</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>LSMinimumSystemVersion</key>

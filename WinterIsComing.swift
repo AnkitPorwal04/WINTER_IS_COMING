@@ -340,6 +340,21 @@ let layers: [Layer] = [
 // MARK: - Scene
 
 final class SnowScene: SKScene {
+    enum CleanupSurface {
+        case ground
+        case dock
+        case window(Int)
+    }
+
+    struct ActiveSweeper {
+        let node: SKNode
+        let surface: CleanupSurface
+        var prevFrontX: CGFloat
+        let frontOffset: CGFloat
+        let speed: CGFloat
+        let endX: CGFloat
+    }
+
     var flakes: [Flake] = []
     var pool: [Flake] = []
     var piles: [Int: Pile] = [:]                 // window number -> snow on top of it
@@ -369,7 +384,7 @@ final class SnowScene: SKScene {
     var cleanupActive = false
     var cleanupCheckAcc: CGFloat = 0
     var cleanupGraceUntil: CGFloat = 0
-    var sweeper: SKNode?
+    var sweepers: [ActiveSweeper] = []
     var spaceGraceUntil: CGFloat = 0
     var lastSweepT: CGFloat = 0
     static let dockID = -2
@@ -535,59 +550,62 @@ final class SnowScene: SKScene {
         guard !cleanupActive else { return }
         cleanupActive = true
         lastSweepT = t
-        let s = makeSweeper()
-        s.position = CGPoint(x: -130, y: 0)
-        s.zPosition = 500
-        world.addChild(s)
-        sweeper = s
+
+        func addSweeper(for surface: CleanupSurface, pile: Pile, scale: CGFloat) {
+            guard pile.h.contains(where: { $0 > 0.4 }) else { return }
+            let margin = 70 * scale
+            let startX = pile.minX - margin
+            let endX = pile.minX + pile.width + margin
+            let duration = min(Cfg.sweepDuration, max(2, Cfg.sweepDuration * pile.width / max(1, size.width)))
+            let s = makeSweeper()
+            s.setScale(scale)
+            s.position = CGPoint(x: startX, y: pile.topY)
+            s.zPosition = 500
+            world.addChild(s)
+            let frontOffset = 38 * scale
+            sweepers.append(ActiveSweeper(node: s, surface: surface,
+                                          prevFrontX: startX + frontOffset, frontOffset: frontOffset,
+                                          speed: (endX - startX) / duration, endX: endX))
+        }
+
+        if let g = ground { addSweeper(for: .ground, pile: g, scale: 1) }
+        if let d = dockPile { addSweeper(for: .dock, pile: d, scale: 0.65) }
+        for (id, p) in piles { addSweeper(for: .window(id), pile: p, scale: 0.6) }
+        if sweepers.isEmpty { finishCleanup() }
     }
 
-    /// A cartoon sweeper walks in from the left and brooms the snow off the screen:
-    /// every column his broom passes bursts into clumps swept ahead of him, window piles
-    /// are shaken loose as he passes beneath them, snowballs go poof, and while he works
-    /// nothing re-piles. When he walks off the right edge the screen is clean.
-    func stepCleanup(_ dt: CGFloat) {
-        guard let s = sweeper else { cleanupActive = false; return }
-        let step = (size.width + 290) / Cfg.sweepDuration * dt
-        s.position.x += step
-        let front = s.position.x + 38
-        let prevX = front - step
+    func cleanupPile(for surface: CleanupSurface) -> Pile? {
+        switch surface {
+        case .ground: return ground
+        case .dock: return dockPile
+        case .window(let id): return piles[id]
+        }
+    }
 
-        var targets: [Pile] = []
-        if let g = ground { targets.append(g) }
-        if let d = dockPile { targets.append(d) }
-
-        var budget = CGFloat(max(0, Cfg.maxClumps - flakes.count + Cfg.targetFlakes))
-        for p in targets {
-            for c in 0..<p.count {
-                let x = p.colX(c)
-                guard x > prevX, x <= front, !p.occ[c], p.h[c] > 0.4 else { continue }
-                let hh = p.h[c]
-                p.h[c] = 0
-                p.dirty = true
-                var amount = hh / 3.0
-                while amount > 0, budget > 0 {
-                    if amount < 1 && CGFloat.random(in: 0...1) > amount { break }
-                    spawnClump(at: CGPoint(x: x + rnd(-1.5, 1.5), y: p.topY + rnd(0, hh)),
-                               vel: CGVector(dx: rnd(170, 360), dy: rnd(110, 260)),
-                               sourceID: -4)
-                    amount -= 1
-                    budget -= 1
-                }
+    func burstCleanupColumns(in p: Pile, from prevX: CGFloat, to front: CGFloat, budget: inout CGFloat) {
+        for c in 0..<p.count {
+            let x = p.colX(c)
+            guard x > prevX, x <= front, !p.occ[c], p.h[c] > 0.4 else { continue }
+            let hh = p.h[c]
+            p.h[c] = 0
+            p.dirty = true
+            var amount = hh / 3.0
+            while amount > 0, budget > 0 {
+                if amount < 1 && CGFloat.random(in: 0...1) > amount { break }
+                spawnClump(at: CGPoint(x: x + rnd(-1.5, 1.5), y: p.topY + rnd(0, hh)),
+                           vel: CGVector(dx: rnd(170, 360), dy: rnd(110, 260)),
+                           sourceID: -4)
+                amount -= 1
+                budget -= 1
             }
         }
+    }
 
-        for (id, p) in piles {
-            let mid = p.colX(p.count / 2)
-            if mid > prevX, mid <= front, p.h.contains(where: { $0 > 0.4 }) {
-                release(p, vel: CGVector(dx: rnd(90, 180), dy: rnd(20, 70)), id: id)
-            }
-        }
-
+    func poofBalls(from prevX: CGFloat, to front: CGFloat) {
         var i = balls.count - 1
         while i >= 0 {
             let b = balls[i]
-            if !b.dragging, !b.falling, b.x <= front {
+            if !b.dragging, !b.falling, b.x > prevX, b.x <= front {
                 b.vel = CGVector(dx: rnd(200, 380), dy: rnd(80, 200))
                 removeDecor(stackOf: b)
                 poof(b)
@@ -596,15 +614,48 @@ final class SnowScene: SKScene {
             }
             i -= 1
         }
+    }
 
-        if s.position.x > size.width + 150 {
-            cleanupActive = false
-            cleanupGraceUntil = t + 1.2
-            targets.append(contentsOf: piles.values)
-            for p in targets { p.clear(); p.redraw() }
-            s.run(.sequence([.fadeOut(withDuration: 0.3), .removeFromParent()]))
-            sweeper = nil
+    func finishCleanup() {
+        cleanupActive = false
+        cleanupGraceUntil = t + 1.2
+        var targets = Array(piles.values)
+        if let g = ground { targets.append(g) }
+        if let d = dockPile { targets.append(d) }
+        for p in targets { p.clear(); p.redraw() }
+        for sweeper in sweepers {
+            sweeper.node.run(.sequence([.fadeOut(withDuration: 0.3), .removeFromParent()]))
         }
+        sweepers.removeAll()
+    }
+
+    /// Cartoon sweepers walk across every snowy surface at once. Each broom bursts
+    /// only its own pile into clumps; the ground sweeper also poofs snowballs.
+    func stepCleanup(_ dt: CGFloat) {
+        guard !sweepers.isEmpty else { finishCleanup(); return }
+        var budget = CGFloat(max(0, Cfg.maxClumps - flakes.count + Cfg.targetFlakes))
+        var finished: [Int] = []
+        for i in sweepers.indices {
+            guard let p = cleanupPile(for: sweepers[i].surface) else {
+                sweepers[i].node.run(.sequence([.fadeOut(withDuration: 0.2), .removeFromParent()]))
+                finished.append(i)
+                continue
+            }
+            let step = sweepers[i].speed * dt
+            sweepers[i].node.position.x += step
+            let front = sweepers[i].node.position.x + sweepers[i].frontOffset
+            burstCleanupColumns(in: p, from: sweepers[i].prevFrontX, to: front, budget: &budget)
+            if case .ground = sweepers[i].surface {
+                poofBalls(from: sweepers[i].prevFrontX, to: front)
+            }
+            sweepers[i].prevFrontX = front
+            if sweepers[i].node.position.x >= sweepers[i].endX {
+                sweepers[i].node.run(.sequence([.fadeOut(withDuration: 0.3), .removeFromParent()]))
+                finished.append(i)
+            }
+        }
+        for i in finished.reversed() { sweepers.remove(at: i) }
+        if sweepers.isEmpty { finishCleanup() }
     }
 
     /// Little cartoon fellow built from shapes: beanie, coat, scarf and a broom,
