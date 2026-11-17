@@ -37,9 +37,21 @@ function start() {
   const child = spawn(binary, [], { detached: true, stdio: "ignore" });
   child.unref();
   console.log("❄︎  Let it snow. Look for the ❄︎ icon in your menu bar.");
+  console.log("   Click the ❄︎ to stop/start snowing; right-click it for options.");
   console.log("   Snow piles up on windows, the Dock, and the ground.");
-  console.log("   When the ground fills up, an avalanche sweeps it clean — forever.");
+  console.log("   When the ground fills up, a little sweeper walks out and cleans it — forever.");
   console.log("   Stop anytime:  winter-is-coming stop");
+}
+
+function makeApp() {
+  try {
+    execFileSync("xcode-select", ["-p"], { stdio: "ignore" });
+  } catch {
+    fail(
+      "Swift compiler not found. Install the Xcode Command Line Tools first:\n\n  xcode-select --install\n"
+    );
+  }
+  execFileSync("zsh", [path.join(pkgRoot, "make-app.sh")], { stdio: "inherit" });
 }
 
 function stop() {
@@ -56,8 +68,9 @@ if (process.platform !== "darwin") fail("winter-is-coming only runs on macOS.");
 const cmd = process.argv[2] || "start";
 if (cmd === "start") start();
 else if (cmd === "stop") stop();
+else if (cmd === "app") makeApp();
 else if (cmd === "rebuild") {
   if (fs.existsSync(binary)) fs.rmSync(binary);
   build();
   console.log("❄︎  Rebuilt. Run `winter-is-coming` to start.");
-} else fail(`Unknown command: ${cmd}\nUsage: winter-is-coming [start|stop|rebuild]`);
+} else fail(`Unknown command: ${cmd}\nUsage: winter-is-coming [start|stop|app|rebuild]`);

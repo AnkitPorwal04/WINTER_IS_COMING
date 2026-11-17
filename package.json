@@ -1,7 +1,7 @@
 {
-  "name": "@ankitporwal04/winter-is-coming",
-  "version": "1.0.0",
-  "description": "Snow for your Mac desktop — endless snowfall that piles on windows and the Dock, with snowballs, snowmen, and an avalanche auto-clear when the ground fills up.",
+  "name": "winter-is-coming",
+  "version": "1.1.1",
+  "description": "Snow for your Mac desktop — endless snowfall that piles on windows and the Dock, with snowballs, snowmen, and a little sweeper who walks out and cleans up when the ground fills up.",
   "bin": {
     "winter-is-coming": "bin/cli.js"
   },
@@ -9,6 +9,7 @@
     "bin/",
     "WinterIsComing.swift",
     "build.sh",
+    "make-app.sh",
     "README.md",
     "LICENSE"
   ],
@@ -32,8 +33,5 @@
     "animation"
   ],
   "author": "Ankit Porwal <porwalankit443@gmail.com>",
-  "license": "MIT",
-  "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
-  }
+  "license": "MIT"
 }

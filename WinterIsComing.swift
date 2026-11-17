@@ -28,9 +28,10 @@ enum Cfg {
     static let ballMaxRadius: CGFloat = 28   // and stops growing at this size
     static let maxBalls = 20                 // oldest resting snowballs are removed beyond this
     static let dockGain: CGFloat = 3.0       // snow landing on the Dock counts this many times more, so it builds up
-    static var autoClear = true              // when the ground is full, a gust sweeps everything away
-    static let cleanupThreshold: CGFloat = 0.8  // ground fullness (0...1) that triggers the sweep
-    static let sweepDuration: CGFloat = 2.4  // seconds for the clear-wave to cross the screen
+    static var autoClear = true              // when the ground is full, the sweeper comes out
+    static let cleanupThreshold: CGFloat = 0.8  // ground fullness (0...1) that calls the sweeper
+    static let sweepDuration: CGFloat = 7.0  // seconds for the sweeper to walk across the screen
+    static let sweepInterval: CGFloat = 240  // sweeper also comes out this many seconds after his last sweep
 }
 
 // MARK: - Find the Dock (needs Accessibility permission)
@@ -366,10 +367,18 @@ final class SnowScene: SKScene {
     var dragVel = CGVector.zero
     var speckTex: SKTexture?
     var cleanupActive = false
-    var cleanupX: CGFloat = 0
     var cleanupCheckAcc: CGFloat = 0
     var cleanupGraceUntil: CGFloat = 0
+    var sweeper: SKNode?
+    var spaceGraceUntil: CGFloat = 0
+    var lastSweepT: CGFloat = 0
     static let dockID = -2
+
+    /// Called when the user swipes to another Space: the whole window list changes at
+    /// once, which must not be mistaken for windows closing or being dragged.
+    func noteSpaceChange() {
+        spaceGraceUntil = t + 1.0
+    }
 
     override func didMove(to view: SKView) {
         backgroundColor = .clear
@@ -500,7 +509,10 @@ final class SnowScene: SKScene {
             cleanupCheckAcc += dt
             if cleanupCheckAcc >= 1.0 {
                 cleanupCheckAcc = 0
-                if groundFullness() >= Cfg.cleanupThreshold { startCleanup() }
+                // Sweep when the ground fills up, or on a fixed timer since the last sweep
+                if groundFullness() >= Cfg.cleanupThreshold || t - lastSweepT >= Cfg.sweepInterval {
+                    startCleanup()
+                }
             }
         }
     }
@@ -520,26 +532,36 @@ final class SnowScene: SKScene {
     }
 
     func startCleanup() {
+        guard !cleanupActive else { return }
         cleanupActive = true
-        cleanupX = -80
+        lastSweepT = t
+        let s = makeSweeper()
+        s.position = CGPoint(x: -130, y: 0)
+        s.zPosition = 500
+        world.addChild(s)
+        sweeper = s
     }
 
-    /// A gust front moves left to right; every snow column it passes bursts into flying clumps,
-    /// snowballs go poof, and while the wave runs nothing re-piles. Then the snow keeps falling.
+    /// A cartoon sweeper walks in from the left and brooms the snow off the screen:
+    /// every column his broom passes bursts into clumps swept ahead of him, window piles
+    /// are shaken loose as he passes beneath them, snowballs go poof, and while he works
+    /// nothing re-piles. When he walks off the right edge the screen is clean.
     func stepCleanup(_ dt: CGFloat) {
-        let prevX = cleanupX
-        cleanupX += (size.width + 360) / Cfg.sweepDuration * dt
+        guard let s = sweeper else { cleanupActive = false; return }
+        let step = (size.width + 290) / Cfg.sweepDuration * dt
+        s.position.x += step
+        let front = s.position.x + 38
+        let prevX = front - step
 
         var targets: [Pile] = []
         if let g = ground { targets.append(g) }
         if let d = dockPile { targets.append(d) }
-        targets.append(contentsOf: piles.values)
 
         var budget = CGFloat(max(0, Cfg.maxClumps - flakes.count + Cfg.targetFlakes))
         for p in targets {
             for c in 0..<p.count {
                 let x = p.colX(c)
-                guard x > prevX, x <= cleanupX, !p.occ[c], p.h[c] > 0.4 else { continue }
+                guard x > prevX, x <= front, !p.occ[c], p.h[c] > 0.4 else { continue }
                 let hh = p.h[c]
                 p.h[c] = 0
                 p.dirty = true
@@ -547,7 +569,7 @@ final class SnowScene: SKScene {
                 while amount > 0, budget > 0 {
                     if amount < 1 && CGFloat.random(in: 0...1) > amount { break }
                     spawnClump(at: CGPoint(x: x + rnd(-1.5, 1.5), y: p.topY + rnd(0, hh)),
-                               vel: CGVector(dx: rnd(260, 540), dy: rnd(140, 430)),
+                               vel: CGVector(dx: rnd(170, 360), dy: rnd(110, 260)),
                                sourceID: -4)
                     amount -= 1
                     budget -= 1
@@ -555,10 +577,17 @@ final class SnowScene: SKScene {
             }
         }
 
+        for (id, p) in piles {
+            let mid = p.colX(p.count / 2)
+            if mid > prevX, mid <= front, p.h.contains(where: { $0 > 0.4 }) {
+                release(p, vel: CGVector(dx: rnd(90, 180), dy: rnd(20, 70)), id: id)
+            }
+        }
+
         var i = balls.count - 1
         while i >= 0 {
             let b = balls[i]
-            if !b.dragging, !b.falling, b.x <= cleanupX {
+            if !b.dragging, !b.falling, b.x <= front {
                 b.vel = CGVector(dx: rnd(200, 380), dy: rnd(80, 200))
                 removeDecor(stackOf: b)
                 poof(b)
@@ -568,11 +597,73 @@ final class SnowScene: SKScene {
             i -= 1
         }
 
-        if cleanupX > size.width + 300 {
+        if s.position.x > size.width + 150 {
             cleanupActive = false
             cleanupGraceUntil = t + 1.2
+            targets.append(contentsOf: piles.values)
             for p in targets { p.clear(); p.redraw() }
+            s.run(.sequence([.fadeOut(withDuration: 0.3), .removeFromParent()]))
+            sweeper = nil
         }
+    }
+
+    /// Little cartoon fellow built from shapes: beanie, coat, scarf and a broom,
+    /// with looping bob / leg-shuffle / broom-swing actions baked in.
+    func makeSweeper() -> SKNode {
+        let n = SKNode()
+
+        func shape(_ s: SKShapeNode, _ color: NSColor, _ pos: CGPoint, z: CGFloat = 0) -> SKShapeNode {
+            s.fillColor = color
+            s.strokeColor = .clear
+            s.position = pos
+            s.zPosition = z
+            return s
+        }
+
+        let coat   = NSColor(red: 0.86, green: 0.35, blue: 0.29, alpha: 1)
+        let beanie = NSColor(red: 0.72, green: 0.26, blue: 0.22, alpha: 1)
+        let skin   = NSColor(red: 0.95, green: 0.78, blue: 0.62, alpha: 1)
+        let navy   = NSColor(red: 0.18, green: 0.21, blue: 0.32, alpha: 1)
+        let scarfC = NSColor(red: 0.26, green: 0.44, blue: 0.70, alpha: 1)
+        let wood   = NSColor(red: 0.54, green: 0.36, blue: 0.18, alpha: 1)
+        let straw  = NSColor(red: 0.85, green: 0.64, blue: 0.22, alpha: 1)
+
+        let legL = shape(SKShapeNode(rectOf: CGSize(width: 6, height: 12), cornerRadius: 2.5), navy, CGPoint(x: -5, y: 6))
+        let legR = shape(SKShapeNode(rectOf: CGSize(width: 6, height: 12), cornerRadius: 2.5), navy, CGPoint(x: 5, y: 6))
+        n.addChild(legL)
+        n.addChild(legR)
+
+        let body = SKNode()
+        n.addChild(body)
+        body.addChild(shape(SKShapeNode(ellipseOf: CGSize(width: 28, height: 32)), coat, CGPoint(x: 0, y: 26)))
+        body.addChild(shape(SKShapeNode(rectOf: CGSize(width: 20, height: 7), cornerRadius: 3.5), scarfC, CGPoint(x: 0, y: 40), z: 2))
+        body.addChild(shape(SKShapeNode(rectOf: CGSize(width: 6, height: 12), cornerRadius: 3), scarfC, CGPoint(x: -6, y: 33), z: 2))
+        body.addChild(shape(SKShapeNode(circleOfRadius: 10), skin, CGPoint(x: 0, y: 52)))
+        body.addChild(shape(SKShapeNode(ellipseOf: CGSize(width: 22, height: 13)), beanie, CGPoint(x: 0, y: 59), z: 1))
+        body.addChild(shape(SKShapeNode(circleOfRadius: 3.5), .white, CGPoint(x: 0, y: 66), z: 1))
+        body.addChild(shape(SKShapeNode(circleOfRadius: 1.4), navy, CGPoint(x: 4, y: 53), z: 2))
+        body.addChild(shape(SKShapeNode(circleOfRadius: 1.4), navy, CGPoint(x: 8.5, y: 52), z: 2))
+
+        let arm = SKNode()
+        arm.position = CGPoint(x: 9, y: 36)
+        body.addChild(arm)
+        arm.addChild(shape(SKShapeNode(rectOf: CGSize(width: 5, height: 14), cornerRadius: 2.5), coat, CGPoint(x: 4, y: -6), z: 3))
+        let handle = SKShapeNode(rectOf: CGSize(width: 3.5, height: 46), cornerRadius: 1.75)
+        handle.zRotation = -0.6
+        arm.addChild(shape(handle, wood, CGPoint(x: 15, y: -17), z: 2))
+        let bristles = SKShapeNode(rectOf: CGSize(width: 14, height: 11), cornerRadius: 2)
+        bristles.zRotation = -0.6
+        arm.addChild(shape(bristles, straw, CGPoint(x: 28, y: -35), z: 2))
+
+        body.run(.repeatForever(.sequence([.moveBy(x: 0, y: 2.4, duration: 0.22),
+                                           .moveBy(x: 0, y: -2.4, duration: 0.22)])))
+        arm.run(.repeatForever(.sequence([.rotate(toAngle: 0.5, duration: 0.24),
+                                          .rotate(toAngle: -0.3, duration: 0.3)])))
+        legL.run(.repeatForever(.sequence([.rotate(toAngle: 0.45, duration: 0.2),
+                                           .rotate(toAngle: -0.45, duration: 0.2)])))
+        legR.run(.repeatForever(.sequence([.rotate(toAngle: -0.45, duration: 0.2),
+                                           .rotate(toAngle: 0.45, duration: 0.2)])))
+        return n
     }
 
     // MARK: Dragging & snowmen
@@ -1001,15 +1092,22 @@ final class SnowScene: SKScene {
                       let b = CGRect(dictionaryRepresentation: bd as CFDictionary) else { continue }
                 let alpha = (w[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1
                 if alpha < 0.05 || b.width < 80 || b.height < 40 { continue }
+                // Fullscreen or maximized windows act as the backdrop: no pile on top,
+                // no ground occlusion, so the snow falls through and collects at the bottom
+                if b.width >= size.width * 0.92 && b.height >= size.height * 0.92 { continue }
                 newOrder.append((id: numN.intValue,
                                  rect: CGRect(x: b.minX, y: H - b.maxY, width: b.width, height: b.height)))
             }
         }
 
+        // During a Space switch the whole list swaps out at once; departing windows
+        // vanish silently (no snow burst) and arriving ones must not look "dragged"
+        let spaceSwitching = t < spaceGraceUntil
+
         // Closed / minimized windows: their snow just falls
         let alive = Set(newOrder.map { $0.id })
         for (id, pile) in piles where !alive.contains(id) {
-            release(pile, vel: .zero, id: id)
+            if !spaceSwitching { release(pile, vel: .zero, id: id) }
             pile.remove()
             piles[id] = nil
             lastRect[id] = nil
@@ -1018,7 +1116,10 @@ final class SnowScene: SKScene {
         for item in newOrder {
             let id = item.id, r = item.rect
             if let pile = piles[id], let old = lastRect[id] {
-                if abs(old.width - r.width) > 0.5 {
+                if spaceSwitching {
+                    pile.minX = r.minX
+                    pile.topY = r.maxY
+                } else if abs(old.width - r.width) > 0.5 {
                     // Width changed: drop the snow and start a new pile
                     release(pile, vel: .zero, id: id)
                     pile.remove()
@@ -1219,6 +1320,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var window: OverlayWindow!
     var scene: SnowScene!
     var statusItem: NSStatusItem!
+    var menuRef: NSMenu!
     var pauseItem: NSMenuItem!
     var autoClearItem: NSMenuItem!
     var amountItems: [NSMenuItem] = []
@@ -1234,7 +1336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.backgroundColor = .clear
         window.hasShadow = false
         window.ignoresMouseEvents = true          // clicks pass straight through
-        window.level = .floating                  // above normal windows, below the Dock and menu bar
+        window.level = .screenSaver               // above every window, fullscreen apps, Dock and menu bar
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
 
         let view = OverlaySKView(frame: NSRect(origin: .zero, size: screen.frame.size))
@@ -1261,6 +1363,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for name in [NSWorkspace.screensDidWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
             ws.addObserver(self, selector: #selector(resumeRendering), name: name, object: nil)
         }
+        ws.addObserver(self, selector: #selector(spaceChanged),
+                       name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+    }
+
+    @objc func spaceChanged() {
+        scene.noteSpaceChange()
+        window.orderFrontRegardless()
+        if !scene.isPaused {
+            (window.contentView as? SKView)?.isPaused = false
+        }
     }
 
     @objc func suspendRendering() {
@@ -1276,9 +1388,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func setupMenu() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "❄︎"
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(statusClicked)
+        statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         let menu = NSMenu()
 
-        pauseItem = NSMenuItem(title: "Pause Snow", action: #selector(togglePause), keyEquivalent: "p")
+        pauseItem = NSMenuItem(title: "Stop Snowing", action: #selector(togglePause), keyEquivalent: "p")
         pauseItem.target = self
         menu.addItem(pauseItem)
 
@@ -1299,24 +1414,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         clear.target = self
         menu.addItem(clear)
 
-        autoClearItem = NSMenuItem(title: "Auto-Clear When Full", action: #selector(toggleAutoClear), keyEquivalent: "a")
+        let sweep = NSMenuItem(title: "Sweep Now 🧹", action: #selector(sweepNow), keyEquivalent: "s")
+        sweep.target = self
+        menu.addItem(sweep)
+
+        autoClearItem = NSMenuItem(title: "Sweeper Auto-Clean", action: #selector(toggleAutoClear), keyEquivalent: "a")
         autoClearItem.target = self
         autoClearItem.state = Cfg.autoClear ? .on : .off
         menu.addItem(autoClearItem)
 
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-        statusItem.menu = menu
+        menuRef = menu
+    }
+
+    // Left-click on the ❄︎ toggles the snow; right-click (or ⌃-click) opens the menu.
+    // The menu is attached only for the duration of the click, otherwise left-clicks
+    // would always open it instead of reaching this action.
+    @objc func statusClicked() {
+        let ev = NSApp.currentEvent
+        if ev?.type == .rightMouseUp || (ev?.modifierFlags.contains(.control) ?? false) {
+            statusItem.menu = menuRef
+            statusItem.button?.performClick(nil)
+            statusItem.menu = nil
+        } else {
+            togglePause()
+        }
     }
 
     @objc func togglePause() {
         scene.isPaused.toggle()
         if scene.isPaused {
             window.orderOut(nil)
-            pauseItem.title = "Resume Snow"
+            pauseItem.title = "Start Snowing"
+            statusItem.button?.appearsDisabled = true
         } else {
             window.orderFrontRegardless()
-            pauseItem.title = "Pause Snow"
+            pauseItem.title = "Stop Snowing"
+            statusItem.button?.appearsDisabled = false
         }
     }
 
@@ -1327,6 +1462,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func clearSnow() { scene.clearAll() }
 
+    @objc func sweepNow() {
+        guard !scene.isPaused, !scene.cleanupActive else { return }
+        scene.startCleanup()
+    }
+
     @objc func toggleAutoClear() {
         Cfg.autoClear.toggle()
         autoClearItem.state = Cfg.autoClear ? .on : .off
@@ -1336,6 +1476,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let screen = NSScreen.screens.first else { return }
         window.setFrame(screen.frame, display: true)
     }
+}
+
+// Single-instance guard: launching the app again (e.g. double-clicking WinterIsComing.app
+// while it already snows) must not spawn a second overlay
+let lockFD = open("/tmp/winter-is-coming.\(getuid()).lock", O_CREAT | O_RDWR, 0o644)
+if lockFD >= 0 && flock(lockFD, LOCK_EX | LOCK_NB) != 0 {
+    print("❄︎ WinterIsComing is already running — check the ❄︎ in the menu bar.")
+    exit(0)
 }
 
 let app = NSApplication.shared

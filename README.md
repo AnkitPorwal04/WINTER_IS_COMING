@@ -1,54 +1,115 @@
-#           ❄︎ WinterIsComing ❄︎
+# ❄︎ Winter Is Coming ❄︎
 
 Let it snow on your Mac! ☃️
 
-Snow falls on your desktop and piles up on your windows and Dock. Roll it into snowballs and build a little snowman. It's all one Swift file, and every flake is drawn in code.
+A cozy, endless snowfall for your desktop — snow drifts down over **everything**, piles up on your windows and Dock, lets you roll snowballs and build snowmen, and when things get too snowy… a tiny cartoon sweeper walks across your screen and tidies it all up. 🧹
+
+It's all **one Swift file**. Every flake is drawn in code. No assets, no frameworks, no nonsense.
 
 <!-- ![demo](docs/demo.gif) -->
 
-## What it can do ✨
+---
 
-- 🌨️ **Cozy snowfall**: three layers of flakes (near, middle and far) drifting in a gentle wind
-- 🏔️ **Snow piles up** on top of your windows, along the Dock and at the bottom of the screen
-- 🪟 **Drag a window and *whoosh*!** The snow flies off. The faster you drag, the farther it goes
-- ⚪ **Roll snowballs** just by moving your mouse sideways over the snow (no clicking!). They grow as they roll
-- 🎳 **Snowballs push each other** along, and one that's pushed off the edge falls down
-- 🖐️ **Hold a snowball** with the left mouse button and carry it anywhere
-- ⛄ **Stack three snowballs** and they turn into a snowman with a carrot nose and a red scarf
-- 💥 **A falling snowball goes *poof*** into a soft heap of snow, ready to be rolled again
-- 🌬️ **It never stops snowing** — and when the ground fills up, an avalanche gust sweeps across the screen, blasting every pile and snowball away in a wave, then the snow starts over. Toggle it with **Auto-Clear When Full** in the menu
+## 🌨️ The Experience
 
-## Install with npm 📦
+Here's what happens after you start it:
+
+1. **Snow begins to fall.** Three layers of flakes (near, middle, far) drift down in a gentle wind — over every app, every window, even fullscreen video. It's purely visual: your mouse and keyboard pass right through it, so nothing ever gets in your way.
+2. **Snow piles up.** Little snowdrifts form on top of your windows, along the Dock, and at the bottom of the screen. With a fullscreen or maximized app in front, the snow quietly collects at the bottom instead.
+3. **You play with it.**
+   - **Drag a window** and *whoosh* — the snow on it flies off. The faster you drag, the farther it flies.
+   - **Move your mouse sideways** through a snowdrift (no clicking!) and it rolls into a snowball that grows as it goes.
+   - **Snowballs push each other** around; one nudged off an edge falls, and goes *poof* into a soft heap.
+   - **Hold a snowball** with the left mouse button and carry it anywhere.
+   - **Stack three snowballs** → ⛄ a snowman appears, carrot nose, red scarf and all.
+4. **The sweeper arrives.** It never stops snowing — instead, when the ground fills up (and at least every **4 minutes**, no matter which screen or Space you're on), a little guy in a red coat and beanie walks across your screen with his broom, sweeps every pile into a flurry, and walks off. Then the snow starts fresh. ✨
+5. **You stay in control.** One click on the ❄︎ in your menu bar pauses or resumes the whole thing instantly.
+
+Switching desktops/Spaces? The snow rides along seamlessly — it lives above everything, on every Space, and never restarts.
+
+---
+
+## 📦 Download & Install
+
+### Option 1 — npm (recommended)
+
+Requires macOS 13+ and Node 18+.
 
 ```sh
-npm install -g @ankitporwal04/winter-is-coming
-winter-is-coming        # let it snow
-winter-is-coming stop   # spring has arrived
+npm install -g winter-is-coming
+winter-is-coming          # ❄︎ let it snow
 ```
 
-> Published on GitHub Packages, so point npm at it once:
-> `echo "@ankitporwal04:registry=https://npm.pkg.github.com" >> ~/.npmrc`
-> (GitHub Packages also needs a GitHub token with `read:packages` in your npm auth.)
+The first run compiles the Swift file (~7 seconds) and caches the binary — after that it starts instantly.
 
-The first run compiles the Swift file (needs Xcode Command Line Tools: `xcode-select --install`) and caches the binary. After that it starts instantly.
+> **No Swift compiler?** Install the (free, small) Xcode Command Line Tools first:
+> ```sh
+> xcode-select --install
+> ```
 
-## Or build from source 🚀
+All CLI commands:
+
+| Command | What it does |
+|---|---|
+| `winter-is-coming` / `winter-is-coming start` | Start the snow |
+| `winter-is-coming stop` | Spring has arrived — stop the snow |
+| `winter-is-coming app` | Build a real **Winter Is Coming.app** into `~/Applications` |
+| `winter-is-coming rebuild` | Force a recompile (after editing the source) |
+
+### Option 2 — a real Mac app
+
+Want to launch it from Spotlight, or have it start automatically at login?
+
+```sh
+winter-is-coming app
+```
+
+This installs **Winter Is Coming.app** into `~/Applications`. Open it like any app, and optionally add it to **System Settings → General → Login Items** so winter greets you at every boot. ☀️→❄︎
+
+### Option 3 — build from source
 
 ```sh
 git clone https://github.com/AnkitPorwal04/WINTER_IS_COMING.git
 cd WINTER_IS_COMING
-zsh build.sh
+zsh build.sh        # compiles and runs
+zsh make-app.sh     # or: build the .app bundle into ~/Applications
 ```
 
-Use the ❄︎ in the menu bar to pause, pick light, medium or heavy snow, clear the snow, or quit.
+---
 
-- No `swiftc`? Run `xcode-select --install` first.
-- Want snow on the Dock too? Turn on **Terminal** in System Settings → Privacy & Security → Accessibility.
+## 🕹️ Controls
 
-## Make it yours 🎨
+Everything lives in the ❄︎ icon in your menu bar:
 
-Every setting lives at the top of `WinterIsComing.swift` (`enum Cfg`): how many flakes fall, how fast they fall, how tall the piles get, how big a snowball can grow… Change a number and run `zsh build.sh` again.
+| Action | Result |
+|---|---|
+| **Left-click ❄︎** | Start / stop the snow instantly |
+| **Right-click ❄︎** | Open the full menu |
+| Snow Amount → Light / Medium / Heavy | 120 / 260 / 500 flakes |
+| **Sweep Now 🧹** | Send the sweeper out right now |
+| **Sweeper Auto-Clean** | Toggle the automatic sweeper (full ground / every 4 minutes) |
+| Clear Snow | Instantly remove all piles, no animation |
+| Quit | Goodbye, winter 👋 |
+
+**Extra:** want snow to pile up on the Dock too? Grant Accessibility permission to Terminal (or the app) in **System Settings → Privacy & Security → Accessibility**.
+
+---
+
+## 🎨 Make It Yours
+
+Every tunable lives at the top of `WinterIsComing.swift` in `enum Cfg` — how many flakes fall, how fast, how tall the piles grow, how big snowballs get, how often the sweeper comes out (`sweepInterval`, seconds), and more. Change a number, run `winter-is-coming rebuild` (or `zsh build.sh`), and enjoy your custom winter.
+
+---
+
+## 🧰 Troubleshooting
+
+- **"swiftc: command not found"** → `xcode-select --install`, then try again.
+- **No snow on the Dock** → grant Accessibility permission (see Controls above).
+- **Snow didn't start** → it's single-instance; run `winter-is-coming stop` then `start`.
+- **Performance** → use Snow Amount → Light on older Macs. The overlay is fully GPU-rendered (SpriteKit) and idles when your screen sleeps.
+
+---
 
 ## License
 
-[MIT](LICENSE) · Made with 💙 and a little help from Claude
+[MIT](LICENSE) · Made with 💙 and a little help from Claude · Original by [yike-shi](https://github.com/yike-shi/WINTER_IS_COMING)
