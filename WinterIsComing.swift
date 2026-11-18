@@ -11,7 +11,7 @@ import SpriteKit
 
 // MARK: - Settings (feel free to tweak)
 
-let appVersion = "1.5.0"
+let appVersion = "1.5.1"
 
 func isNewerVersion(_ remote: String, than local: String) -> Bool {
     let remoteParts = remote.split(separator: ".")
@@ -310,6 +310,7 @@ let layers: [Layer] = [
     var ignoreUntil: CGFloat = 0
     var canSettle = false         // ledge clumps can pile below even during cleanup
     var settleBelowY = CGFloat.greatestFiniteMagnitude
+    var discardOnLanding = false // cleanup bursts vanish instead of ever re-piling
 
     init(texture: SKTexture) { node = SKSpriteNode(texture: texture) }
 }
@@ -537,6 +538,7 @@ final class SnowScene: SKScene {
         f.ignoreID = -1
         f.canSettle = false
         f.settleBelowY = .greatestFiniteMagnitude
+        f.discardOnLanding = false
         f.size = CGFloat.random(in: L.size)
         f.vel = CGVector(dx: 0, dy: -CGFloat.random(in: L.speed) * Cfg.fallSpeed)
         f.swayAmp = CGFloat.random(in: L.sway)
@@ -550,7 +552,8 @@ final class SnowScene: SKScene {
     }
 
     func spawnClump(at p: CGPoint, vel: CGVector, sourceID: Int,
-                    canSettle: Bool = false, settleBelowY: CGFloat = .greatestFiniteMagnitude) {
+                    canSettle: Bool = false, settleBelowY: CGFloat = .greatestFiniteMagnitude,
+                    discardOnLanding: Bool = false) {
         let f = obtain()
         f.isClump = true
         f.inFront = false
@@ -560,6 +563,7 @@ final class SnowScene: SKScene {
         f.ignoreUntil = t + 0.35
         f.canSettle = canSettle
         f.settleBelowY = settleBelowY
+        f.discardOnLanding = discardOnLanding
         f.node.alpha = 0.95
         f.node.size = CGSize(width: f.size * 2.2, height: f.size * 2.2)
         f.node.zPosition = 6
@@ -677,11 +681,10 @@ final class SnowScene: SKScene {
     func burstCleanupColumns(in p: Pile, on surface: CleanupSurface,
                              from prevX: CGFloat, to front: CGFloat, budget: inout CGFloat) {
         let sourceID: Int
-        let canSettle: Bool
         switch surface {
-        case .ground: sourceID = -4; canSettle = false
-        case .dock: sourceID = SnowScene.dockID; canSettle = true
-        case .window(let id): sourceID = id; canSettle = true
+        case .ground: sourceID = -4
+        case .dock: sourceID = SnowScene.dockID
+        case .window(let id): sourceID = id
         }
         for c in 0..<p.count {
             let x = p.colX(c)
@@ -692,11 +695,9 @@ final class SnowScene: SKScene {
             var amount = hh / 3.0
             while amount > 0, budget > 0 {
                 if amount < 1 && CGFloat.random(in: 0...1) > amount { break }
-                let vel = canSettle ? CGVector(dx: rnd(45, 130), dy: rnd(25, 90))
-                                    : CGVector(dx: rnd(170, 360), dy: rnd(110, 260))
                 spawnClump(at: CGPoint(x: x + rnd(-1.5, 1.5), y: p.topY + rnd(0, hh)),
-                           vel: vel, sourceID: sourceID,
-                           canSettle: canSettle, settleBelowY: p.topY)
+                           vel: CGVector(dx: rnd(170, 360), dy: rnd(110, 260)),
+                           sourceID: sourceID, canSettle: false, discardOnLanding: true)
                 amount -= 1
                 budget -= 1
             }
@@ -721,8 +722,10 @@ final class SnowScene: SKScene {
     func finishCleanup() {
         cleanupActive = false
         cleanupGraceUntil = t + 1.2
-        for p in piles.values { p.redraw() }
+        for p in piles.values { p.clear(); p.redraw() }
+        dockPile?.clear()
         dockPile?.redraw()
+        ground?.clear()
         ground?.redraw()
         for sweeper in sweepers {
             sweeper.node.run(.sequence([.fadeOut(withDuration: 0.3), .removeFromParent()]))
@@ -1404,7 +1407,7 @@ final class SnowScene: SKScene {
         for _ in 0..<n {
             spawnClump(at: CGPoint(x: b.x + rnd(-b.r, b.r), y: b.y + rnd(-b.r * 0.5, b.r * 0.5)),
                        vel: CGVector(dx: b.vel.dx * 0.3 + rnd(-90, 90), dy: rnd(40, 170)),
-                       sourceID: -3)
+                       sourceID: -3, discardOnLanding: true)
         }
     }
 
@@ -1599,7 +1602,7 @@ final class SnowScene: SKScene {
             }
 
             var gone = false
-            let deposit = f.canSettle || (!cleanupActive && t >= cleanupGraceUntil)
+            let deposit = !f.discardOnLanding && (f.canSettle || (!cleanupActive && t >= cleanupGraceUntil))
             func canLand(on pile: Pile) -> Bool {
                 !f.canSettle || pile.topY < f.settleBelowY - 0.5
             }

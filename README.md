@@ -22,7 +22,7 @@ Here's what happens after you start it:
    - **Snowballs push each other** around; one nudged off an edge falls, and goes *poof* into a soft heap.
    - **Hold a snowball** with the left mouse button and carry it anywhere.
    - **Stack three snowballs** → ⛄ a snowman appears, carrot nose, red scarf and all.
-4. **The sweepers arrive.** It never stops snowing — instead, when the ground fills up (and on a timer you pick — **Sweep Every 1 / 3 / 5 / 10 minutes**, no matter which screen or Space you're on), little guys in red coats and beanies clean every snowy window ledge, the Dock, and the ground, sweep each pile into a flurry, and walk off. Snow swept from a window ledge tumbles down and settles naturally on whatever is below. ✨
+4. **The sweepers arrive.** It never stops snowing — instead, when the ground fills up (and on a timer you pick — **Sweep Every 1 / 3 / 5 / 10 minutes**, no matter which screen or Space you're on), little guys in red coats and beanies clean every snowy window ledge, the Dock, and the ground, sweep each pile into a flurry, and walk off. A sweep clears every ledge completely; snow knocked loose by dragging or closing a window still tumbles down and settles naturally below. ✨
 5. **A reindeer-drawn sleigh flies by.** Every so often, a red-nosed team pulls an empty gift-filled sleigh through the sky from either direction — and optional jingle bells can make the flyby extra festive. 🦌🔔
 6. **You stay in control.** One click on the ❄︎ in your menu bar pauses or resumes the whole thing instantly.
 
