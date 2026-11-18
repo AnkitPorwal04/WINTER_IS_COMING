@@ -6,11 +6,12 @@
 // Run:   ./WinterIsComing   (a ❄︎ icon appears in the menu bar: pause / snow amount / quit)
 
 import Cocoa
+import AVFoundation
 import SpriteKit
 
 // MARK: - Settings (feel free to tweak)
 
-let appVersion = "1.3.1"
+let appVersion = "1.5.0"
 
 func isNewerVersion(_ remote: String, than local: String) -> Bool {
     let remoteParts = remote.split(separator: ".")
@@ -48,6 +49,69 @@ enum Cfg {
     static let cleanupThreshold: CGFloat = 0.8  // ground fullness (0...1) that calls the sweeper
     static let sweepDuration: CGFloat = 7.0  // seconds for the sweeper to walk across the screen
     static var sweepInterval: CGFloat = 180  // sweeper also comes out this many seconds after his last sweep (menu: 1/3/5/10 min)
+    static var reindeerInterval: CGFloat = 600  // how often the reindeer flies past (menu: 1/5/10/30 min)
+    static var jingle = false               // jingle bells when the reindeer passes
+    static let reindeerFlightDuration: CGFloat = 9.0  // seconds for one reindeer flyby
+}
+
+@MainActor final class Jingle {
+    static let shared = Jingle()
+    private var engine: AVAudioEngine?
+    private var player: AVAudioPlayerNode?
+
+    private init() {}
+
+    func play() {
+        let sampleRate = 44_100.0
+        let length = 2.1
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1) else { return }
+        let frameCount = AVAudioFrameCount(sampleRate * length)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount),
+              let samples = buffer.floatChannelData?[0] else { return }
+        buffer.frameLength = frameCount
+
+        let notes: [(start: Double, duration: Double)] = [
+            (0.00, 0.24), (0.30, 0.24), (0.60, 0.36),
+            (1.08, 0.24), (1.38, 0.24), (1.68, 0.36),
+        ]
+        let frequency = 659.25
+        for i in 0..<Int(frameCount) {
+            let time = Double(i) / sampleRate
+            var value = 0.0
+            for note in notes {
+                let age = time - note.start
+                guard age >= 0, age < note.duration else { continue }
+                let attack = min(1, age / 0.008)
+                let decay = exp(-7 * age / note.duration)
+                let phase = 2 * Double.pi * frequency * age
+                let bell = sin(phase) + 0.38 * sin(phase * 2.03) + 0.18 * sin(phase * 3.91)
+                value += 0.11 * attack * decay * bell
+            }
+            samples[i] = Float(value)
+        }
+
+        let audioEngine: AVAudioEngine
+        let audioPlayer: AVAudioPlayerNode
+        if let engine = engine, let player = player {
+            audioEngine = engine
+            audioPlayer = player
+        } else {
+            audioEngine = AVAudioEngine()
+            audioPlayer = AVAudioPlayerNode()
+            audioEngine.attach(audioPlayer)
+            audioEngine.connect(audioPlayer, to: audioEngine.mainMixerNode, format: format)
+            engine = audioEngine
+            player = audioPlayer
+        }
+        do {
+            if !audioEngine.isRunning { try audioEngine.start() }
+            audioPlayer.stop()
+            audioPlayer.scheduleBuffer(buffer, at: nil, options: .interrupts, completionHandler: nil)
+            audioPlayer.play()
+        } catch {
+            // Audio is optional; unavailable output stays silent.
+        }
+    }
 }
 
 // MARK: - Find the Dock (needs Accessibility permission)
@@ -244,6 +308,8 @@ let layers: [Layer] = [
     var isClump = false          // true = clump sliding off a surface (affected by gravity)
     var ignoreID = -1            // don't land right back on the surface it came from
     var ignoreUntil: CGFloat = 0
+    var canSettle = false         // ledge clumps can pile below even during cleanup
+    var settleBelowY = CGFloat.greatestFiniteMagnitude
 
     init(texture: SKTexture) { node = SKSpriteNode(texture: texture) }
 }
@@ -403,6 +469,8 @@ final class SnowScene: SKScene {
     var sweepers: [ActiveSweeper] = []
     var spaceGraceUntil: CGFloat = 0
     var lastSweepT: CGFloat = 0
+    var lastReindeerT: CGFloat = 0
+    var reindeer: SKNode?
     static let dockID = -2
 
     /// Called when the user swipes to another Space: the whole window list changes at
@@ -467,6 +535,8 @@ final class SnowScene: SKScene {
         f.inFront = Cfg.flakesInFront && li == 0 && CGFloat.random(in: 0...1) < Cfg.inFrontFraction
         f.isClump = false
         f.ignoreID = -1
+        f.canSettle = false
+        f.settleBelowY = .greatestFiniteMagnitude
         f.size = CGFloat.random(in: L.size)
         f.vel = CGVector(dx: 0, dy: -CGFloat.random(in: L.speed) * Cfg.fallSpeed)
         f.swayAmp = CGFloat.random(in: L.sway)
@@ -479,7 +549,8 @@ final class SnowScene: SKScene {
         f.node.position = CGPoint(x: rnd(-40, size.width + 40), y: y ?? size.height + rnd(2, 30))
     }
 
-    func spawnClump(at p: CGPoint, vel: CGVector, sourceID: Int) {
+    func spawnClump(at p: CGPoint, vel: CGVector, sourceID: Int,
+                    canSettle: Bool = false, settleBelowY: CGFloat = .greatestFiniteMagnitude) {
         let f = obtain()
         f.isClump = true
         f.inFront = false
@@ -487,6 +558,8 @@ final class SnowScene: SKScene {
         f.vel = vel
         f.ignoreID = sourceID
         f.ignoreUntil = t + 0.35
+        f.canSettle = canSettle
+        f.settleBelowY = settleBelowY
         f.node.alpha = 0.95
         f.node.size = CGSize(width: f.size * 2.2, height: f.size * 2.2)
         f.node.zPosition = 6
@@ -511,7 +584,7 @@ final class SnowScene: SKScene {
                 if amount < 1 && CGFloat.random(in: 0...1) > amount { break }
                 spawnClump(at: CGPoint(x: p.colX(c) + rnd(-1.5, 1.5), y: p.topY + rnd(0, p.h[c])),
                            vel: CGVector(dx: fling.dx + rnd(-40, 40), dy: fling.dy + rnd(10, 80)),
-                           sourceID: id)
+                           sourceID: id, canSettle: true, settleBelowY: p.topY)
                 amount -= 1
             }
         }
@@ -536,13 +609,16 @@ final class SnowScene: SKScene {
         stepBalls(dt)
         if cleanupActive {
             stepCleanup(dt)
-        } else if Cfg.autoClear {
+        } else {
             cleanupCheckAcc += dt
             if cleanupCheckAcc >= 1.0 {
                 cleanupCheckAcc = 0
                 // Sweep when the ground fills up, or on a fixed timer since the last sweep
-                if groundFullness() >= Cfg.cleanupThreshold || t - lastSweepT >= Cfg.sweepInterval {
+                if Cfg.autoClear && (groundFullness() >= Cfg.cleanupThreshold || t - lastSweepT >= Cfg.sweepInterval) {
                     startCleanup()
+                }
+                if !cleanupActive, reindeer == nil, t - lastReindeerT >= Cfg.reindeerInterval {
+                    startReindeer()
                 }
             }
         }
@@ -598,7 +674,15 @@ final class SnowScene: SKScene {
         }
     }
 
-    func burstCleanupColumns(in p: Pile, from prevX: CGFloat, to front: CGFloat, budget: inout CGFloat) {
+    func burstCleanupColumns(in p: Pile, on surface: CleanupSurface,
+                             from prevX: CGFloat, to front: CGFloat, budget: inout CGFloat) {
+        let sourceID: Int
+        let canSettle: Bool
+        switch surface {
+        case .ground: sourceID = -4; canSettle = false
+        case .dock: sourceID = SnowScene.dockID; canSettle = true
+        case .window(let id): sourceID = id; canSettle = true
+        }
         for c in 0..<p.count {
             let x = p.colX(c)
             guard x > prevX, x <= front, !p.occ[c], p.h[c] > 0.4 else { continue }
@@ -608,9 +692,11 @@ final class SnowScene: SKScene {
             var amount = hh / 3.0
             while amount > 0, budget > 0 {
                 if amount < 1 && CGFloat.random(in: 0...1) > amount { break }
+                let vel = canSettle ? CGVector(dx: rnd(45, 130), dy: rnd(25, 90))
+                                    : CGVector(dx: rnd(170, 360), dy: rnd(110, 260))
                 spawnClump(at: CGPoint(x: x + rnd(-1.5, 1.5), y: p.topY + rnd(0, hh)),
-                           vel: CGVector(dx: rnd(170, 360), dy: rnd(110, 260)),
-                           sourceID: -4)
+                           vel: vel, sourceID: sourceID,
+                           canSettle: canSettle, settleBelowY: p.topY)
                 amount -= 1
                 budget -= 1
             }
@@ -635,10 +721,9 @@ final class SnowScene: SKScene {
     func finishCleanup() {
         cleanupActive = false
         cleanupGraceUntil = t + 1.2
-        var targets = Array(piles.values)
-        if let g = ground { targets.append(g) }
-        if let d = dockPile { targets.append(d) }
-        for p in targets { p.clear(); p.redraw() }
+        for p in piles.values { p.redraw() }
+        dockPile?.redraw()
+        ground?.redraw()
         for sweeper in sweepers {
             sweeper.node.run(.sequence([.fadeOut(withDuration: 0.3), .removeFromParent()]))
         }
@@ -660,7 +745,8 @@ final class SnowScene: SKScene {
             let step = sweepers[i].speed * dt
             sweepers[i].node.position.x += step
             let front = sweepers[i].node.position.x + sweepers[i].frontOffset
-            burstCleanupColumns(in: p, from: sweepers[i].prevFrontX, to: front, budget: &budget)
+            burstCleanupColumns(in: p, on: sweepers[i].surface,
+                                from: sweepers[i].prevFrontX, to: front, budget: &budget)
             if case .ground = sweepers[i].surface {
                 poofBalls(from: sweepers[i].prevFrontX, to: front)
             }
@@ -730,6 +816,182 @@ final class SnowScene: SKScene {
                                            .rotate(toAngle: -0.45, duration: 0.2)])))
         legR.run(.repeatForever(.sequence([.rotate(toAngle: -0.45, duration: 0.2),
                                            .rotate(toAngle: 0.45, duration: 0.2)])))
+        return n
+    }
+
+    // MARK: Reindeer flyby
+
+    func startReindeer() {
+        guard !cleanupActive, reindeer == nil else { return }
+        lastReindeerT = t
+        let r = makeReindeer()
+        let leftToRight = Bool.random()
+        let margin: CGFloat = 120
+        r.position = CGPoint(x: leftToRight ? -margin : size.width + margin,
+                             y: rnd(size.height * 0.55, size.height * 0.9))
+        r.xScale = leftToRight ? 1 : -1
+        r.zPosition = 600
+        world.addChild(r)
+        reindeer = r
+        if Cfg.jingle { Jingle.shared.play() }
+
+        let fly = SKAction.moveTo(x: leftToRight ? size.width + margin : -margin,
+                                  duration: TimeInterval(Cfg.reindeerFlightDuration))
+        fly.timingMode = .easeInEaseOut
+        let wobble = SKAction.repeat(.sequence([.moveBy(x: 0, y: 6, duration: 0.75),
+                                                .moveBy(x: 0, y: -6, duration: 0.75)]),
+                                     count: max(1, Int(ceil(Cfg.reindeerFlightDuration / 1.5))))
+        r.run(.sequence([.group([fly, wobble]), .run { [weak self, weak r] in
+            guard let self = self, let r = r else { return }
+            r.removeFromParent()
+            if self.reindeer === r { self.reindeer = nil }
+        }]))
+    }
+
+    func makeReindeer() -> SKNode {
+        let n = SKNode()
+        let rig = SKNode()
+        n.addChild(rig)
+
+        func shape(_ s: SKShapeNode, _ color: NSColor, _ pos: CGPoint, z: CGFloat = 0) -> SKShapeNode {
+            s.fillColor = color
+            s.strokeColor = .clear
+            s.position = pos
+            s.zPosition = z
+            return s
+        }
+
+        let brown = NSColor(red: 0.45, green: 0.25, blue: 0.12, alpha: 1)
+        let darkBrown = NSColor(red: 0.31, green: 0.16, blue: 0.08, alpha: 1)
+        let antlerBrown = NSColor(red: 0.24, green: 0.12, blue: 0.06, alpha: 1)
+        let belly = NSColor(red: 0.72, green: 0.52, blue: 0.31, alpha: 1)
+        let cream = NSColor(red: 0.87, green: 0.72, blue: 0.52, alpha: 1)
+        let red = NSColor(red: 0.92, green: 0.12, blue: 0.10, alpha: 1)
+        let gold = NSColor(red: 0.94, green: 0.70, blue: 0.20, alpha: 1)
+        let green = NSColor(red: 0.12, green: 0.48, blue: 0.25, alpha: 1)
+
+        func makeDeer(color: NSColor, lead: Bool, phase: TimeInterval) -> SKNode {
+            let deer = SKNode()
+            let tailPath = CGMutablePath()
+            tailPath.move(to: CGPoint(x: -31, y: 5))
+            tailPath.addLine(to: CGPoint(x: -47, y: 13))
+            tailPath.addLine(to: CGPoint(x: -42, y: -2))
+            tailPath.closeSubpath()
+            deer.addChild(shape(SKShapeNode(path: tailPath), cream, .zero, z: -1))
+            deer.addChild(shape(SKShapeNode(ellipseOf: CGSize(width: 67, height: 34)), color, CGPoint(x: -2, y: 0)))
+            deer.addChild(shape(SKShapeNode(ellipseOf: CGSize(width: 43, height: 14)), belly, CGPoint(x: 1, y: -6), z: 1))
+            deer.addChild(shape(SKShapeNode(ellipseOf: CGSize(width: 27, height: 31)), color, CGPoint(x: 35, y: 11), z: 1))
+            deer.addChild(shape(SKShapeNode(ellipseOf: CGSize(width: 25, height: 14)), cream, CGPoint(x: 50, y: 5), z: 2))
+            deer.addChild(shape(SKShapeNode(ellipseOf: CGSize(width: 9, height: 14)), cream, CGPoint(x: 28, y: 24), z: 1))
+            deer.addChild(shape(SKShapeNode(circleOfRadius: 2), antlerBrown, CGPoint(x: 42, y: 15), z: 3))
+
+            for baseX in [29.0, 41.0] as [CGFloat] {
+                let antler = SKNode()
+                antler.position = CGPoint(x: baseX, y: 23)
+                antler.zPosition = -1
+                let stem = SKShapeNode(rectOf: CGSize(width: 3, height: 24), cornerRadius: 1.5)
+                stem.zRotation = 0.12
+                antler.addChild(shape(stem, antlerBrown, CGPoint(x: 0, y: 10)))
+                for (y, angle, x) in [(9.0, -0.85, -5.0), (15.0, 0.8, 5.0), (21.0, -0.75, -5.0)] {
+                    let branch = SKShapeNode(rectOf: CGSize(width: 2.5, height: 13), cornerRadius: 1.2)
+                    branch.zRotation = CGFloat(angle)
+                    antler.addChild(shape(branch, antlerBrown, CGPoint(x: CGFloat(x), y: CGFloat(y))))
+                }
+                deer.addChild(antler)
+            }
+
+            if lead {
+                let glow = shape(SKShapeNode(circleOfRadius: 7), red.withAlphaComponent(0.22), CGPoint(x: 63, y: 6), z: 2)
+                glow.glowWidth = 5
+                deer.addChild(glow)
+                deer.addChild(shape(SKShapeNode(circleOfRadius: 4), red, CGPoint(x: 63, y: 6), z: 3))
+            }
+
+            for (i, x) in [-24.0, -9.0, 9.0, 24.0].enumerated() {
+                let leg = SKNode()
+                leg.position = CGPoint(x: CGFloat(x), y: -10)
+                leg.zPosition = -1
+                leg.addChild(shape(SKShapeNode(rectOf: CGSize(width: 5, height: 26), cornerRadius: 2),
+                                   color, CGPoint(x: 0, y: -11)))
+                deer.addChild(leg)
+                let a: CGFloat = i.isMultiple(of: 2) ? 0.7 : -0.7
+                let gallop = SKAction.repeatForever(.sequence([.rotate(toAngle: a, duration: 0.18),
+                                                               .rotate(toAngle: -a, duration: 0.18)]))
+                leg.run(.sequence([.wait(forDuration: phase + Double(i) * 0.025), gallop]))
+            }
+            return deer
+        }
+
+        let reinPath = CGMutablePath()
+        reinPath.move(to: CGPoint(x: -42, y: 2))
+        reinPath.addLine(to: CGPoint(x: 38, y: 11))
+        reinPath.move(to: CGPoint(x: -42, y: -1))
+        reinPath.addLine(to: CGPoint(x: 99, y: 25))
+        let reins = SKShapeNode(path: reinPath)
+        reins.strokeColor = gold
+        reins.lineWidth = 1.7
+        reins.lineCap = .round
+        reins.zPosition = 0
+        rig.addChild(reins)
+
+        let rear = makeDeer(color: darkBrown, lead: false, phase: 0.08)
+        rear.position = CGPoint(x: 15, y: 0)
+        rear.setScale(0.82)
+        rear.zPosition = 1
+        rig.addChild(rear)
+
+        let lead = makeDeer(color: brown, lead: true, phase: 0)
+        lead.position = CGPoint(x: 78, y: 13)
+        lead.setScale(0.72)
+        lead.zPosition = 2
+        rig.addChild(lead)
+
+        let sleighBody = CGMutablePath()
+        sleighBody.move(to: CGPoint(x: -122, y: 8))
+        sleighBody.addLine(to: CGPoint(x: -48, y: 8))
+        sleighBody.addQuadCurve(to: CGPoint(x: -37, y: -19), control: CGPoint(x: -43, y: -8))
+        sleighBody.addLine(to: CGPoint(x: -108, y: -19))
+        sleighBody.closeSubpath()
+        rig.addChild(shape(SKShapeNode(path: sleighBody), red, .zero, z: 3))
+
+        let trim = SKShapeNode(rectOf: CGSize(width: 77, height: 6), cornerRadius: 3)
+        rig.addChild(shape(trim, gold, CGPoint(x: -82, y: 8), z: 4))
+        let back = SKShapeNode(rectOf: CGSize(width: 9, height: 52), cornerRadius: 4)
+        back.zRotation = -0.12
+        rig.addChild(shape(back, red, CGPoint(x: -118, y: 19), z: 3))
+
+        let runnerPath = CGMutablePath()
+        runnerPath.move(to: CGPoint(x: -124, y: -31))
+        runnerPath.addCurve(to: CGPoint(x: -45, y: -31), control1: CGPoint(x: -105, y: -38), control2: CGPoint(x: -65, y: -38))
+        runnerPath.addQuadCurve(to: CGPoint(x: -28, y: -15), control: CGPoint(x: -25, y: -32))
+        let runner = SKShapeNode(path: runnerPath)
+        runner.strokeColor = gold
+        runner.lineWidth = 5
+        runner.lineCap = .round
+        runner.zPosition = 2
+        rig.addChild(runner)
+        for x in [-103.0, -52.0] as [CGFloat] {
+            let strut = SKShapeNode(rectOf: CGSize(width: 4, height: 18), cornerRadius: 2)
+            rig.addChild(shape(strut, gold, CGPoint(x: x, y: -23), z: 2))
+        }
+
+        func addGift(at p: CGPoint, size: CGSize, color: NSColor, ribbon: NSColor) {
+            let gift = SKNode()
+            gift.position = p
+            gift.zPosition = 2
+            gift.addChild(shape(SKShapeNode(rectOf: size, cornerRadius: 2), color, .zero))
+            gift.addChild(shape(SKShapeNode(rectOf: CGSize(width: 4, height: size.height)), ribbon, .zero, z: 1))
+            gift.addChild(shape(SKShapeNode(rectOf: CGSize(width: size.width, height: 4)), ribbon, .zero, z: 1))
+            rig.addChild(gift)
+        }
+        addGift(at: CGPoint(x: -94, y: 18), size: CGSize(width: 24, height: 25), color: green, ribbon: cream)
+        addGift(at: CGPoint(x: -68, y: 16), size: CGSize(width: 27, height: 21), color: cream, ribbon: red)
+
+        rig.setScale(0.62)
+        rig.run(.repeatForever(.sequence([.group([.moveBy(x: 0, y: 5, duration: 0.45),
+                                                  .rotate(toAngle: 0.04, duration: 0.45)]),
+                                         .group([.moveBy(x: 0, y: -5, duration: 0.45),
+                                                  .rotate(toAngle: -0.04, duration: 0.45)])])))
         return n
     }
 
@@ -1337,11 +1599,16 @@ final class SnowScene: SKScene {
             }
 
             var gone = false
-            let deposit = !cleanupActive && t >= cleanupGraceUntil
+            let deposit = f.canSettle || (!cleanupActive && t >= cleanupGraceUntil)
+            func canLand(on pile: Pile) -> Bool {
+                !f.canSettle || pile.topY < f.settleBelowY - 0.5
+            }
+            func ignores(_ id: Int) -> Bool {
+                f.isClump && f.ignoreID == id && (f.canSettle || t < f.ignoreUntil)
+            }
             if p.y < prevY {
                 // The Dock is always in front of every window, so check it first
-                if let d = dockPile, let c = d.col(at: p.x),
-                   !(f.isClump && f.ignoreID == SnowScene.dockID && t < f.ignoreUntil) {
+                if let d = dockPile, canLand(on: d), let c = d.col(at: p.x), !ignores(SnowScene.dockID) {
                     let s = d.surface(c)
                     if prevY >= s && p.y < s {
                         if deposit { d.add(at: c, amount: (f.isClump ? 1.6 : f.size * 0.16) * Cfg.dockGain) }
@@ -1351,7 +1618,7 @@ final class SnowScene: SKScene {
                 // Then check window tops, front to back
                 if !gone && !f.inFront { for item in order {
                     guard let pile = piles[item.id] else { continue }
-                    if f.isClump && item.id == f.ignoreID && t < f.ignoreUntil { continue }
+                    if !canLand(on: pile) || ignores(item.id) { continue }
                     guard let c = pile.col(at: p.x), !pile.occ[c] else { continue }
                     let s = pile.surface(c)
                     if prevY >= s && p.y < s {
@@ -1361,14 +1628,14 @@ final class SnowScene: SKScene {
                     }
                 } }
                 // Finally the bottom of the screen
-                if !gone, let g = ground, let c = g.col(at: p.x), p.y < g.surface(c) {
+                if !gone, let g = ground, canLand(on: g), let c = g.col(at: p.x), p.y < g.surface(c) {
                     if deposit && !g.occ[c] { g.add(at: c, amount: f.isClump ? 1.6 : f.size * 0.12) }
                     gone = true
                 }
             }
             if !gone {
                 // Flakes that fall "behind" a window disappear
-                if !f.inFront {
+                if !f.inFront && !f.canSettle {
                     for item in order where item.rect.contains(p) { gone = true; break }
                 }
                 if p.y < -20 { gone = true }
@@ -1409,8 +1676,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var menuRef: NSMenu!
     var pauseItem: NSMenuItem!
     var autoClearItem: NSMenuItem!
+    var jingleItem: NSMenuItem!
     var amountItems: [NSMenuItem] = []
     var intervalItems: [NSMenuItem] = []
+    var reindeerIntervalItems: [NSMenuItem] = []
     var updateItem: NSMenuItem?
     var offeredVersion: String?
     var updateTimer: Timer?
@@ -1531,6 +1800,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(autoClearItem)
 
         menu.addItem(.separator())
+
+        let fly = NSMenuItem(title: "Fly Now 🦌", action: #selector(flyNow), keyEquivalent: "r")
+        fly.target = self
+        menu.addItem(fly)
+
+        let reindeerEvery = NSMenuItem(title: "Reindeer Every", action: nil, keyEquivalent: "")
+        let reindeerSub = NSMenu()
+        for minutes in [1, 5, 10, 30] {
+            let it = NSMenuItem(title: "\(minutes) min", action: #selector(setReindeerInterval(_:)), keyEquivalent: "")
+            it.target = self
+            it.tag = minutes * 60
+            it.state = (CGFloat(it.tag) == Cfg.reindeerInterval) ? .on : .off
+            reindeerSub.addItem(it)
+            reindeerIntervalItems.append(it)
+        }
+        reindeerEvery.submenu = reindeerSub
+        menu.addItem(reindeerEvery)
+
+        jingleItem = NSMenuItem(title: "Jingle Bells", action: #selector(toggleJingle), keyEquivalent: "j")
+        jingleItem.target = self
+        jingleItem.state = Cfg.jingle ? .on : .off
+        menu.addItem(jingleItem)
+
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         menuRef = menu
     }
@@ -1631,6 +1924,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for it in intervalItems { it.state = (it === sender) ? .on : .off }
     }
 
+    @objc func setReindeerInterval(_ sender: NSMenuItem) {
+        Cfg.reindeerInterval = CGFloat(sender.tag)
+        for it in reindeerIntervalItems { it.state = (it === sender) ? .on : .off }
+    }
+
     @objc func clearSnow() { scene.clearAll() }
 
     @objc func sweepNow() {
@@ -1638,9 +1936,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         scene.startCleanup()
     }
 
+    @objc func flyNow() {
+        guard !scene.isPaused else { return }
+        scene.startReindeer()
+    }
+
     @objc func toggleAutoClear() {
         Cfg.autoClear.toggle()
         autoClearItem.state = Cfg.autoClear ? .on : .off
+    }
+
+    @objc func toggleJingle() {
+        Cfg.jingle.toggle()
+        jingleItem.state = Cfg.jingle ? .on : .off
     }
 
     @objc func screensChanged() {
