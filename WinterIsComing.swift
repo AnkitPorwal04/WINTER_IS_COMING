@@ -11,7 +11,7 @@ import SpriteKit
 
 // MARK: - Settings (feel free to tweak)
 
-let appVersion = "1.5.1"
+let appVersion = "1.5.2"
 
 func isNewerVersion(_ remote: String, than local: String) -> Bool {
     let remoteParts = remote.split(separator: ".")
@@ -472,6 +472,7 @@ final class SnowScene: SKScene {
     var lastSweepT: CGFloat = 0
     var lastReindeerT: CGFloat = 0
     var reindeer: SKNode?
+    var snowfallEnabled = true
     static let dockID = -2
 
     /// Called when the user swipes to another Space: the whole window list changes at
@@ -502,13 +503,30 @@ final class SnowScene: SKScene {
     }
 
     func clearAll() {
-        for p in piles.values { p.clear(); p.redraw() }
-        dockPile?.clear()
-        dockPile?.redraw()
-        ground?.clear()
-        ground?.redraw()
-        for b in balls { b.node.removeFromParent() }
+        while !flakes.isEmpty { recycle(at: flakes.count - 1) }
+        for sweeper in sweepers {
+            sweeper.node.removeAllActions()
+            sweeper.node.removeFromParent()
+        }
+        sweepers.removeAll()
+        cleanupActive = false
+        cleanupGraceUntil = t
+        reindeer?.removeAllActions()
+        reindeer?.removeFromParent()
+        reindeer = nil
+        activeBall = nil
+        dragBall = nil
+        for b in balls {
+            removeDecor(stackOf: b)
+            b.node.removeFromParent()
+        }
         balls.removeAll()
+        for p in piles.values { p.clear() }
+        dockPile?.clear()
+        ground?.clear()
+        for p in piles.values { p.redraw() }
+        dockPile?.redraw()
+        ground?.redraw()
     }
 
     // MARK: Flake pool
@@ -1655,8 +1673,10 @@ final class SnowScene: SKScene {
         }
 
         // Top up flakes (max 6 per frame so they don't appear in a row)
-        let deficit = min(6, Cfg.targetFlakes - normal)
-        if deficit > 0 { for _ in 0..<deficit { spawnFlake() } }
+        if snowfallEnabled {
+            let deficit = min(6, Cfg.targetFlakes - normal)
+            if deficit > 0 { for _ in 0..<deficit { spawnFlake() } }
+        }
     }
 }
 
@@ -1686,6 +1706,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var updateItem: NSMenuItem?
     var offeredVersion: String?
     var updateTimer: Timer?
+    var stopRequested = false
+    var pauseGeneration = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let screen = NSScreen.screens.first else { return }
@@ -1735,10 +1757,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func spaceChanged() {
         scene.noteSpaceChange()
+        guard !scene.isPaused, !stopRequested else { return }
         window.orderFrontRegardless()
-        if !scene.isPaused {
-            (window.contentView as? SKView)?.isPaused = false
-        }
+        (window.contentView as? SKView)?.isPaused = false
     }
 
     @objc func suspendRendering() {
@@ -1747,7 +1768,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func resumeRendering() {
         // Stay paused if the user paused snow from the menu
-        guard !scene.isPaused else { return }
+        guard !scene.isPaused, !stopRequested else { return }
         (window.contentView as? SKView)?.isPaused = false
     }
 
@@ -1905,12 +1926,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func togglePause() {
-        scene.isPaused.toggle()
-        if scene.isPaused {
-            window.orderOut(nil)
+        pauseGeneration += 1
+        let generation = pauseGeneration
+        if !scene.isPaused && !stopRequested {
+            stopRequested = true
+            scene.snowfallEnabled = false
+            scene.clearAll()
+            (window.contentView as? SKView)?.isPaused = false
             pauseItem.title = "Start Snowing"
             statusItem.button?.appearsDisabled = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+                guard let self = self,
+                      self.pauseGeneration == generation,
+                      self.stopRequested else { return }
+                self.scene.clearAll()
+                self.scene.isPaused = true
+                (self.window.contentView as? SKView)?.isPaused = true
+                self.window.orderOut(nil)
+            }
         } else {
+            stopRequested = false
+            scene.clearAll()
+            scene.snowfallEnabled = true
+            scene.isPaused = false
+            (window.contentView as? SKView)?.isPaused = false
             window.orderFrontRegardless()
             pauseItem.title = "Stop Snowing"
             statusItem.button?.appearsDisabled = false

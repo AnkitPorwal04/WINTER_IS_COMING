@@ -84,7 +84,7 @@ Everything lives in the ❄︎ icon in your menu bar:
 
 | Action | Result |
 |---|---|
-| **Left-click ❄︎** | Start / stop the snow instantly |
+| **Left-click ❄︎** | Start / stop instantly; stopping leaves every desktop completely clean |
 | **Right-click ❄︎** | Open the full menu |
 | Snow Amount → Light / Medium / Heavy | 120 / 260 / 500 flakes |
 | **Sweep Now 🧹** | Send the sweeper out right now |
@@ -94,7 +94,7 @@ Everything lives in the ❄︎ icon in your menu bar:
 | **Reindeer Every → 1 / 5 / 10 / 30 min** | How often the reindeer flies past (default: 10 min) |
 | **Jingle Bells** | Toggle the short flyby jingle (off by default) |
 | **Update to X…** | The app checks daily and offers fresh snow-code here; the CLI also prints a notice when an update is ready |
-| Clear Snow | Instantly remove all piles, no animation |
+| Clear Snow | Instantly remove every flake and pile everywhere |
 | Quit | Goodbye, winter 👋 |
 
 **Extra:** want snow to pile up on the Dock too? Grant Accessibility permission to Terminal (or the app) in **System Settings → Privacy & Security → Accessibility**.
