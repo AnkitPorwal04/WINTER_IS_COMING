@@ -93,7 +93,7 @@ Everything lives in the ❄︎ icon in your menu bar:
 | **Fly Now 🦌** | Send the reindeer across the sky right now |
 | **Reindeer Every → 1 / 5 / 10 / 30 min** | How often the reindeer flies past (default: 10 min) |
 | **Jingle Bells** | Toggle the short flyby jingle (off by default) |
-| **Update to X…** | The app checks daily and offers fresh snow-code here; the CLI also prints a notice when an update is ready |
+| **Update to X…** | The app checks daily and offers fresh snow-code here; you also get a notification when a new version lands, and the ❄︎ wears a small dot until you update. The CLI prints a notice too |
 | Clear Snow | Instantly remove every flake and pile everywhere |
 | Quit | Goodbye, winter 👋 |
 

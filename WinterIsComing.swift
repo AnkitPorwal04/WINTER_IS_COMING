@@ -11,7 +11,7 @@ import SpriteKit
 
 // MARK: - Settings (feel free to tweak)
 
-let appVersion = "1.5.2"
+let appVersion = "1.6.0"
 
 func isNewerVersion(_ remote: String, than local: String) -> Bool {
     let remoteParts = remote.split(separator: ".")
@@ -25,6 +25,11 @@ func isNewerVersion(_ remote: String, than local: String) -> Bool {
         if a != b { return a > b }
     }
     return false
+}
+
+// Quotes and backslashes would end an AppleScript string early, so they are escaped before interpolation
+func appleScriptEscaped(_ text: String) -> String {
+    text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
 }
 
 enum Cfg {
@@ -1705,6 +1710,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var reindeerIntervalItems: [NSMenuItem] = []
     var updateItem: NSMenuItem?
     var offeredVersion: String?
+    var updatePending = false
+    static let notifiedKey = "notifiedUpdateVersion"
+    var notifiedVersion = UserDefaults.standard.string(forKey: AppDelegate.notifiedKey)
     var updateTimer: Timer?
     var stopRequested = false
     var pauseGeneration = 0
@@ -1774,10 +1782,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func setupMenu() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = "❄︎"
         statusItem.button?.target = self
         statusItem.button?.action = #selector(statusClicked)
         statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        refreshStatusTitle()
         let menu = NSMenu()
 
         pauseItem = NSMenuItem(title: "Stop Snowing", action: #selector(togglePause), keyEquivalent: "p")
@@ -1852,6 +1860,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuRef = menu
     }
 
+    // The one place that writes the button: a dot while an update waits, dimmed while the snow is stopped
+    func refreshStatusTitle() {
+        statusItem.button?.title = updatePending ? "❄︎•" : "❄︎"
+        statusItem.button?.appearsDisabled = stopRequested
+    }
+
     func checkForUpdate() {
         guard let url = URL(string: "https://registry.npmjs.org/winter-is-coming/latest") else { return }
         URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
@@ -1866,6 +1880,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func offerUpdate(to version: String) {
         if let offered = offeredVersion, !isNewerVersion(version, than: offered) { return }
         offeredVersion = version
+        updatePending = true
+        refreshStatusTitle()
+        notifyUpdate(version)
         if let item = updateItem {
             item.title = "Update to \(version)…"
             return
@@ -1877,8 +1894,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateItem = item
     }
 
+    // osascript instead of UNUserNotificationCenter: the app is unsigned, this asks for no permission
+    func notifyUpdate(_ version: String) {
+        guard version != notifiedVersion else { return }
+        notifiedVersion = version
+        UserDefaults.standard.set(version, forKey: AppDelegate.notifiedKey)
+        let body = appleScriptEscaped("Version \(version) is available — click ❄︎ and choose Update")
+        let title = appleScriptEscaped("Winter Is Coming")
+        DispatchQueue.global(qos: .utility).async {
+            let banner = Process()
+            banner.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            banner.arguments = ["-e", "display notification \"\(body)\" with title \"\(title)\""]
+            banner.standardOutput = FileHandle.nullDevice
+            banner.standardError = FileHandle.nullDevice
+            do {
+                try banner.run()
+                banner.waitUntilExit()
+            } catch {}
+        }
+    }
+
     @objc func installUpdate(_ sender: NSMenuItem) {
         sender.isEnabled = false
+        updatePending = false
+        refreshStatusTitle()
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let updater = Process()
             updater.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -1934,7 +1973,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             scene.clearAll()
             (window.contentView as? SKView)?.isPaused = false
             pauseItem.title = "Start Snowing"
-            statusItem.button?.appearsDisabled = true
+            refreshStatusTitle()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
                 guard let self = self,
                       self.pauseGeneration == generation,
@@ -1952,7 +1991,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             (window.contentView as? SKView)?.isPaused = false
             window.orderFrontRegardless()
             pauseItem.title = "Stop Snowing"
-            statusItem.button?.appearsDisabled = false
+            refreshStatusTitle()
         }
     }
 
